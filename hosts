@@ -1,0 +1,8 @@
+[all:vars]
+ansible_user=root
+ansible_ssh_pass=password
+
+[nets]
+ipa.skudrin.ru ansible_host=10.100.11.147
+client1.skudrin.ru ansible_host=10.100.11.148 
+client2.skudrin.ru ansible_host=10.100.11.149

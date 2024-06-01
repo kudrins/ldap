@@ -1,0 +1,112 @@
+---
+- name: create vms
+  hosts: localhost
+  vars_files: vars.yml
+  become: false
+  gather_facts: false
+  tasks:
+  - name: deploy servers
+    local_action:
+      module: vmware_guest
+      hostname: "{{ vcenter_hostname }}"
+      username: "{{ vcenter_username }}"
+      password: "{{ vcenter_password }}"
+      validate_certs: False
+      datacenter: Datacenter
+      datastore: datastore_6TB
+      folder: otus_network
+      template: t_centos8
+      name: "{{item.name}}"
+      hardware:
+        memory_mb: "{{item.memory_mb}}"
+      networks:
+        - name: VMs11
+          ip: "{{item.ip}}"
+          netmask: 255.255.255.0
+          gateway: 10.100.11.254
+      customization:
+        dns_servers: [10.100.11.200]
+        hostname: "{{item.hostname}}"
+      state: powered-on
+      wait_for_ip_address: true
+    with_items: "{{servers}}"
+    delegate_to: localhost
+  tags:
+    vms
+
+- name: set ipa
+  hosts: ipa.skudrin.ru
+  become: yes
+  tasks:
+  #Отключение SElinux из автозагрузки, будет применено после перезагрузки
+  - name: disable SElinux
+    selinux:
+      state: disabled
+  #Отключение SElinux до перезагрузки
+  - name: disable SElinux now
+    shell: setenforce 0
+  #Запуск службы Chrony, добавление её в автозагрузку
+  - name: enable chrony
+    service:
+      name: chronyd
+      state: restarted
+      enabled: true
+  #Копирование файла /etc/hosts c правами root:root 0644
+  - name: change /etc/hosts
+    template:
+      src: hosts.j2
+      dest: /etc/hosts
+      owner: root
+      group: root
+      mode: 0644
+  # configure 
+  - name: configure 
+    shell: "{{item}}"
+    with_items:
+      - echo 'net.ipv6.conf.lo.disable_ipv6 = 0' >>  /etc/sysctl.conf
+      - sysctl -p
+      - firewall-cmd --permanent --add-port={80,443}/tcp --add-port={88,464}/{tcp,udp}  --add-port={389,636}/tcp
+      - firewall-cmd --reload
+      - yum install -y @idm:DL1
+      - yum install -y ipa-server
+  tags:
+    ipa
+
+- name: set client
+  hosts: client1.skudrin.ru, client2.skudrin.ru
+  become: yes
+  tasks:
+  #Отключение SElinux из автозагрузки, будет применено после перезагрузки
+  - name: disable SElinux
+    selinux:
+      state: disabled
+  #Отключение SElinux до перезагрузки
+  - name: disable SElinux now
+    shell: setenforce 0
+    #Запуск службы Chrony, добавление её в автозагрузку
+  - name: enable chrony
+    service:
+      name: chronyd
+      state: restarted
+      enabled: true
+  #Копирование файла /etc/hosts c правами root:root 0644
+  - name: change /etc/hosts
+    template:
+      src: hosts.j2
+      dest: /etc/hosts
+      owner: root
+      group: root
+      mode: 0644
+  #Установка клиента Freeipa
+  - name: install module ipa-client
+    yum:
+      name:
+        - freeipa-client
+      state: present
+      update_cache: true
+  #Запуск скрипта добавления хоста к серверу
+  - name: add host to ipa-server
+    shell: echo -e "yes\nyes" | ipa-client-install --mkhomedir --domain=skudrin.ru --server=ipa.skudrin.ru --no-ntp -p admin -w otus2022
+  tags:
+    client
+
